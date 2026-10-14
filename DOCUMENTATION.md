@@ -1,4 +1,4 @@
-# UndoAndRedo 2.1 — Combat rewind: snapshot fast path + deterministic replay
+# UndoAndRedo 2.2.1 — Combat rewind: snapshot fast path + deterministic replay
 
 Press **Left Arrow** to undo the last player decision in combat, **Right Arrow** to redo it.
 
@@ -153,17 +153,18 @@ room's pooled `NCard` nodes are freed with the room instead of returned to the p
 ## Files
 
 ```
-UndoAndRedo/
-  UndoAndRedoMod.cs         Entry point, logging, toast, Harmony patches
-  ReplayRecorder.cs         Event/id/open-action tracking, checksums, mementos, boundary + segment analysis
-  RewindEngine.cs           Undo/redo orchestration: fast path dispatch, teardown, rebuild, feed, settle, verify
-  ShadowSnapshot.cs         Research tool: path→value model diff on a worker thread (logs/UndoAndRedo.shadow)
-  FastPath/FastPath.cs      Mode file, capture validity, TryFastUndo, queue detach, shadow trial
-  FastPath/ModelSnapshot.cs In-place memento of an object graph (capture/restore)
-  FastPath/VisualRebuild.cs Fresh combat room + hand/intents/orbs/potions/top bar from the model
-  FastPath/ScreenCover.cs   Freeze-frame cover used by the fast path
-  SelfTest.cs               Automated end-to-end test (only runs when logs/UndoAndRedo.selftest exists)
-  UndoAndRedo.json          Mod manifest (DLL only, no PCK needed on 0.107+)
+.
+├── FastPath/
+│   ├── FastPath.cs         Mode file, capture validity, TryFastUndo, queue detach, shadow trial
+│   ├── ModelSnapshot.cs    In-place memento of an object graph (capture/restore)
+│   ├── VisualRebuild.cs    Fresh combat room + hand/intents/orbs/potions/top bar from the model
+│   └── ScreenCover.cs      Freeze-frame cover used by the fast path
+├── UndoAndRedoMod.cs       Entry point, logging, toast, Harmony patches
+├── ReplayRecorder.cs       Event/id/open-action tracking, checksums, mementos, boundary + segment analysis
+├── RewindEngine.cs         Undo/redo orchestration: fast path dispatch, teardown, rebuild, feed, settle, verify
+├── ShadowSnapshot.cs       Research tool: path→value model diff on a worker thread (logs/UndoAndRedo.shadow)
+├── SelfTest.cs             Automated end-to-end test (only runs when logs/UndoAndRedo.selftest exists)
+└── UndoAndRedo.json        Mod manifest (DLL only, no PCK needed on 0.107+)
 ```
 
 ### Harmony patches
@@ -295,18 +296,11 @@ growth); physics is left untouched.
 
 ## Publishing
 
-Steam Workshop item: see README. Package layout `nexus_packages/workshop/UndoAndRedo/content/UndoAndRedo/{dll,json}`
-plus `description.txt` (Steam BBCode) and `preview.png`; upload with `tools/WorkshopUploader` (`create` for the
-first upload, `update --item <id>` afterwards; Steam must be running and logged in).
+Steam Workshop item and the current installation/package details are listed in the root [README](README.md).
 
 ## Build & deploy
 
-```bash
-"C:/Users/Jiesi Luo/.dotnet9/dotnet" build UndoAndRedo/UndoAndRedo.csproj -c Release \
-  '-p:STS2GameDir=D:/Program Files (x86)/Steam/steamapps/common/Slay the Spire 2'
-cp UndoAndRedo/bin/Release/net9.0/UndoAndRedo.dll UndoAndRedo/UndoAndRedo.json \
-  "D:/Program Files (x86)/Steam/steamapps/common/Slay the Spire 2/mods/"
-```
+See the root [README](README.md) for the .NET build command and manual install steps.
 
 ## Maintenance
 

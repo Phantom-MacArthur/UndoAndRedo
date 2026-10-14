@@ -1,210 +1,73 @@
-# STS2 Mods
+# UndoAndRedo
 
-A collection of quality-of-life mods for **Slay the Spire 2** (Godot 4.5.1 / C# / .NET 9.0), using HarmonyX 2.4.2 for runtime method patching.
+Slay the Spire 2 的单人战斗撤销与重做 mod。当前 mod 版本：**2.2.1**。
 
-## Mods
+Steam 创意工坊：[Undo and Redo](https://steamcommunity.com/sharedfiles/filedetails/?id=3801936266)
 
-### UndoAndRedo
+## 使用方法
 
-Published on the Steam Workshop: https://steamcommunity.com/sharedfiles/filedetails/?id=3801936266 (update it with
-`tools/WorkshopUploader` (`update --item 3801936266 ...`); package in `nexus_packages/workshop/UndoAndRedo`).
+| 按键 | 功能 |
+| --- | --- |
+| ← 左方向键 | 撤销最近一次玩家决策 |
+| → 右方向键 | 重做 |
 
-Combat undo/redo, two mechanisms kept apart:
+支持撤销/重做出牌、使用或丢弃药水、结束回合。撤销结束回合时，也会一并回退敌方回合。撤销后执行新的操作会清空重做记录。
 
-- **Fast path** (default): before every player decision the mod takes an in-place memento of the whole combat
-  model (every field of every reachable object, ~1 ms). Undo writes it back into the same objects, verifies the
-  game's own state checksum (`NetFullCombatState`), and rebuilds the combat screen from the model. About 0.1 s
-  at any depth.
-- **Replay path** (fallback, and always used for redo): the game's own combat replay recorder
-  (`CombatReplayWriter`) and replay player. Undo rebuilds the run from the save the game took when the room was
-  entered and re-feeds every recorded event except the undone decision in the game's non-interactive replay
-  mode; redo feeds the removed events back in. Used whenever the fast path has no verified memento.
+默认优先使用经过游戏战斗状态校验的快速快照；快照不可用或校验失败时，撤销会回退到游戏内置战斗回放机制。重做使用回放机制。操作过程中会重建战斗画面，因此也可以在动画或敌方回合期间请求撤销。
 
-| Key | Action |
-|-----|--------|
-| **Left Arrow** | Undo the last player decision (card play, potion, end turn) |
-| **Right Arrow** | Redo |
+## 限制
 
-**Features:**
-- No hand-written state capture: anything the game can replay in multiplayer, this mod can undo
-- Works across turns (undoing an end-turn rewinds the whole enemy turn), with potions, with card-selection prompts
-- Can be pressed mid-animation or during the enemy turn
-- Unbounded undo depth within a combat; redo stack cleared by any new action
-- Verifies the state checksum after every rewind (and the event count after replays), logs to `%APPDATA%\SlayTheSpire2\logs\UndoAndRedo.log` (summary only; create `logs\UndoAndRedo.debug` for the full trace)
-- Built-in end-to-end self-test (see documentation)
+- 仅支持单人游戏。
+- 从事件中开始的战斗只能使用快速快照路径；若当前没有可用且已验证的快照，撤销不会执行。
+- 若同时使用自动结束回合的 mod，撤销结束回合后，该 mod 可能立即再次结束回合。
+- 快速路径通常约需 0.1 秒；回放路径需要重建战斗，耗时会随已进行的回合增加。
 
-**Limitations:**
-- Singleplayer only
-- Fights started from an event: fast path only (no replay fallback); refused with a toast if no verified snapshot applies
-- Mods that auto-end the turn (SpeedX) end it again right after an end-of-turn is undone
-- Fast-path undo ~0.1 s; a replay-path undo rebuilds the room (~0.4 s plus ~0.12 s per earlier turn replayed)
+## 安装
 
-See [UndoAndRedo/DOCUMENTATION.md](UndoAndRedo/DOCUMENTATION.md) for the design and [UndoAndRedo/LESSONS.md](UndoAndRedo/LESSONS.md) for the bugs found, root causes, testing method and compatibility audit.
+将 `UndoAndRedo.dll` 和 `UndoAndRedo.json` 放入游戏目录的 `mods` 文件夹。此 mod 使用 DLL 加外部 JSON 清单，不需要 `.pck` 文件。游戏目录结构示例：
 
------|--------|
-| **Left Arrow** | Undo |
-| **Right Arrow** | Redo |
-
-**Features:**
-- Captures all combat state: creature HP/block/powers (including internal power data like VoidForm counters), card piles, energy, stars, orbs, pets/summoned creatures, potions, relics, monster RNG & move states, combat history, run RNG
-- Bounded undo stack (50 snapshots max)
-- Failed-snapshot sentinel (gracefully skips corrupt snapshots instead of crashing)
-- Full visual refresh after restore: hand cards, power icons, health bars, orb positions, potion slots, pile counts, card descriptions, monster intents, end-turn button state
-- Summoned creature cleanup: removes pet visuals (e.g., King's Sword) when undoing the card that summoned them
-- Animation snapping: cancels all in-progress tweens and snaps visuals to their final positions instantly
-- Guard conditions prevent undo during enemy turns, mid-animation, or screen transitions
-- Logs to `<Godot user data>/logs/UndoAndRedo.log` for debugging
-
-**Limitations:**
-- Single-player only
-- Cannot undo mid-animation (action queue must be idle)
-- Some cosmetic-only event subscriptions may become stale after undo (e.g., power VFX flashes)
-
-See [UndoAndRedo/DOCUMENTATION.md](UndoAndRedo/DOCUMENTATION.md) for full technical documentation.
-
----
-
-### QuickRestart
-
-Press **F5** to instantly restart the current combat room from the last auto-save, without returning to the main menu.
-
-**Features:**
-- Reloads run state from the auto-save file
-- Preserves map route drawings
-- Preserves enemy positions on screen
-- Smooth fade-out/fade-in transition
-- Only active during a run (disabled on game over or during screen transitions)
-
----
-
-### UnifiedSavePath
-
-Forces the game to use the same save directory regardless of whether mods are loaded. STS2 normally separates modded saves into a different profile directory, which means your vanilla save progress is invisible when playing with mods and vice versa.
-
-**How it works:** Patches `UserDataPathProvider.IsRunningModded` to always return `false`, and patches `GetProfileDir` directly as a safety net against JIT inlining.
-
----
-
-### UpgradeAllCards
-
-Published on the Steam Workshop: https://steamcommunity.com/sharedfiles/filedetails/?id=3801790594 (subscribe on any device, including Steam Deck). Update it with `tools/WorkshopUploader` (`update --item 3801790594 ...`).
-
-Automatically grants all three egg relics (Frozen Egg, Molten Egg, Toxic Egg) at the start of every run, upgrades the starting deck, and removes the eggs from the relic pool so they won't appear again mid-run.
-
-**How it works:**
-- Postfix on `Player.PopulateStartingRelics` to add the eggs
-- Postfix on `Player.PopulateStartingDeck` to upgrade every card
-- Postfixes on both `RelicGrabBag.Populate` overloads to remove the eggs from the player's pool (rewards, shops, events) and from the run's shared pool (treasure chests), on `LoadFromSerializable` so runs saved before 1.2.0 are cleaned when loaded, and on `RefreshRarity` so a refilled pool stays egg-free
-
----
-
-### RngPredictor — Random Number Predictor (随机数预测)
-
-Published on the Steam Workshop: https://steamcommunity.com/sharedfiles/filedetails/?id=3802380322 (update it with
-`tools/WorkshopUploader` (`update --item 3802380322 ...`); package in `nexus_packages/workshop/RngPredictor`, preview
-must stay under 1 MB).
-
-Inspired by the STS1 Workshop mod **随机数预测大师 / RandomNumberPredictionMaster**. Hover something with a random
-effect and a panel at the top-left shows what it will actually do, computed on an exact clone of the game's RNG
-stream (`new Rng(seed, counter)`), so the answer is the real one, not a probability.
-
-| Hover | Shows |
-|-------|-------|
-| A hand card in combat | the cards it will generate / offer (Discovery, Infernal Blade, Quasar, Jackpot, ...), the card it will pick from your hand or piles (True Grit, Cinder, Thrash, Seeker Strike, Beat Down, Catastrophe, ...), the enemies each hit will land on (Sword Boomerang, Ricochet, Flak Cannon, Volley, Bouncing Flask, ...), orbs (Chaos), potions (Alchemize), and for the Defect every card that channels or evokes (Zap, Dualcast, Tempest, Multi-Cast, Rainbow, Glacier, ...): which enemy each Lightning evoke and end-of-turn passive will hit, orbs pushed out of full slots included. Random-target attacks and orbs track predicted HP, so an enemy a hit would kill is dropped from the later draws (marked kill) |
-| A potion | Attack / Skill / Power / Colorless Potion options, Cosmic Concoction, Orobic Acid, Entropic Brew potions, Snecko Oil draws and every card's new cost |
-| The draw or discard pile | the draw pile order after the next reshuffle (top first), now and after the hand is discarded |
-| The End Turn button | which enemy each Lightning orb passive will hit this turn |
-| A deck card on a "choose a card to transform" screen (events, New Leaf, Astrolabe) | what it becomes as the 1st / 2nd / ... transformed card |
-| A Neow / ancient option that grants a relic (New Leaf, Astrolabe, Pandora's Box, Leafy Poultice, Arcane Scroll, Hefty Tablet, Lead Paperweight, Phial Holster, Alchemical Coffer, Large / Small Capsule, Toy Box, Calling Bell, Cauldron, Neow's Bones, Sere Talon, Sand Castle, War Paint, Whetstone, Fragrant Mushroom, Lost Coffer) | what every eligible deck card would become, the reward cards you will be given or offered (upgrade rolls included), the potions you get, before you pick it |
-| A rest-site option (Dig) or an event option with a random outcome (Endless Conveyor's random upgrade / potion / transform dishes, The Legends Were True / Potion Courier / Wellspring random potions, Punch-Off / Round Tea Party / Wongo's bargain bin / Trash Heap / Doll Room random relics, Infested Automaton / Fried Eel / Trash Heap random cards, Reflections / Tablet of Truth / Doors of Light and Dark random upgrades, Wongo's random downgrade, Slippery Bridge's next card, the transform options of Aroma of Chaos, Whispering Hollow, Symbiote, Morphic Grove, Trial, and every "obtain a random relic" option: This or That, Ranwid the Elder, Unrest Site, Luminous Choir, the Trial's merchant, Neow's Large Capsule) | which card gets upgraded, which potion or relic you get, what each deck card would become |
-
-**F8** toggles the mod. Predictions refresh a few times per second while hovered, so if a relic or power consumes
-the same RNG stream first, the display corrects itself immediately. Singleplayer.
-
-Verified in-game on v0.107.1 by a built-in self-test (`logs\RngPredictor.selftest`) and shadow verification of
-the game's own generators (`logs\RngPredictor.verify`); see [RngPredictor/DOCUMENTATION.md](RngPredictor/DOCUMENTATION.md).
-
----
-
-## Build & Deploy
-
-All mods target .NET 9.0 and reference `sts2.dll`, `0Harmony.dll`, and `GodotSharp.dll` from the game directory.
-
-### Build
-
-```bash
-# Build a specific mod (e.g., UndoAndRedo)
-dotnet build UndoAndRedo/UndoAndRedo.csproj -c Release \
-  '-p:STS2GameDir=D:/Program Files (x86)/Steam/steamapps/common/Slay the Spire 2'
+```text
+Slay the Spire 2/
+└── mods/
+    ├── UndoAndRedo.dll
+    └── UndoAndRedo.json
 ```
 
-Replace the `STS2GameDir` path with your game install location.
+## 从源码构建
 
-### Deploy
+需要安装 .NET 9 SDK，并将 `STS2GameDir` 指向 Slay the Spire 2 的安装目录。PowerShell 示例：
 
-Each mod ships **three files** to `<game>/mods/` for compatibility with both stable and beta (0.99+) branches:
-
-| File | Purpose |
-|------|---------|
-| `ModName.dll` | Compiled mod assembly |
-| `ModName.pck` | Godot resource pack (required by stable branch) |
-| `ModName.json` | External manifest (required by 0.99+ beta branch) |
-
-The `.json` manifest declares `has_pck` and `has_dll` so the new mod loader knows what to load. The `.pck` is still needed for the stable branch which discovers mods by scanning for `.pck` files.
-
-```bash
-# Copy all three files (game must be closed)
-cp UndoAndRedo/bin/Release/net9.0/UndoAndRedo.dll \
-  "D:/Program Files (x86)/Steam/steamapps/common/Slay the Spire 2/mods/UndoAndRedo.dll"
-cp UndoAndRedo/UndoAndRedo.json \
-  "D:/Program Files (x86)/Steam/steamapps/common/Slay the Spire 2/mods/UndoAndRedo.json"
-cp UndoAndRedo/UndoAndRedo.pck \
-  "D:/Program Files (x86)/Steam/steamapps/common/Slay the Spire 2/mods/UndoAndRedo.pck"
+```powershell
+dotnet build .\UndoAndRedo.csproj -c Release "-p:STS2GameDir=C:\Program Files (x86)\Steam\steamapps\common\Slay the Spire 2"
 ```
 
-To create a `.pck` file for code-only mods, use PCK Explorer or `create_pck.py` to bundle `mod_manifest.json` into a minimal resource pack.
+构建完成后，将以下两个文件复制到游戏目录的 `mods` 文件夹：
 
-### Project Structure
-
-```
-STS2Mods/
-  UndoAndRedo/          Combat undo/redo (Left/Right Arrow)
-    UndoAndRedoMod.cs       Entry point, input handling, Harmony patches
-    ReplayRecorder.cs       Tracks the game's replay event stream, action ids, checksums
-    RewindEngine.cs         Rebuild + replay orchestration (undo/redo)
-    SelfTest.cs             Automated end-to-end test
-    UndoAndRedo.json        Manifest (DLL only)
-    DOCUMENTATION.md        Design documentation
-  QuickRestart/         Quick restart (F5)
-    QuickRestartMod.cs    Entry point, restart logic
-    QuickRestart.json     External manifest (0.99+)
-    mod_manifest.json     Internal manifest (inside .pck)
-  UnifiedSavePath/      Shared save directory
-    UnifiedSavePathMod.cs Harmony patches
-    UnifiedSavePath.json  External manifest (0.99+)
-    mod_manifest.json     Internal manifest (inside .pck)
-  UpgradeAllCards/      Auto-upgrade starting deck
-    UpgradeAllCardsMod.cs Harmony patches
-    UpgradeAllCards.json  External manifest (0.99+)
-    mod_manifest.json     Internal manifest (inside .pck)
-  RngPredictor/         Random-outcome preview on hover (F8 toggles)
-    RngPredictorMod.cs    Entry point, Harmony hooks (card holder / potion / pile focus, transform screen)
-    PredictionManager.cs  Hover state, periodic recompute, overlay driving
-    Predictors.cs         One predictor per card / potion / transform / shuffle
-    Sim.cs                Side-effect-free mirrors of the game's random generators on a cloned Rng
-    Overlay.cs            Godot overlay (NCard rows, text, enemy target markers)
-    Verify.cs             Shadow verification of the game's generators (logs/RngPredictor.verify)
-    SelfTest.cs           End-to-end in-game test (logs/RngPredictor.selftest)
-    RngPredictor.json     Manifest (DLL only)
-    DOCUMENTATION.md      Design notes
+```text
+bin\Release\net9.0\UndoAndRedo.dll
+UndoAndRedo.json
 ```
 
-## Technology
+## 项目结构
 
-- **Game:** Slay the Spire 2 (Godot 4.5.1 / C# / .NET 9.0)
-- **Patching:** HarmonyX 2.4.2 (runtime method patching via `[ModInitializer]`)
-- **Mod format:** Dual-compatible with stable (`.pck`-based discovery) and 0.99+ beta (`.json`-based discovery)
+```text
+.
+├── FastPath/              快照还原与战斗画面重建
+├── banner.html            Mod 横幅素材
+├── nexusmods_description.bbcode
+├── ReplayRecorder.cs      记录战斗事件、撤销边界和校验信息
+├── RewindEngine.cs        撤销/重做及游戏回放流程
+├── SelfTest.cs            可选的游戏内端到端测试
+├── ShadowSnapshot.cs      快照诊断工具
+├── UndoAndRedoMod.cs      Mod 入口、按键和 Harmony 补丁
+├── UndoAndRedo.csproj
+├── UndoAndRedo.json       Mod 清单
+├── DOCUMENTATION.md       实现设计与测试说明
+└── LESSONS.md             已发现问题、修复原因和兼容性经验
+```
 
-## Credits
+日志默认写入游戏用户数据目录下的 `logs/UndoAndRedo.log`。如需详细跟踪信息，可在同一 `logs` 目录创建 `UndoAndRedo.debug` 文件。
 
-UndoAndRedo is inspired by [Undo the Spire](https://github.com/filippobaroni/undo-the-spire) for Slay the Spire 1 by **filippobaroni** ([Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3354673683)). That mod used STSStateSaver under the hood. This STS2 version is a ground-up rewrite for the Godot/.NET architecture.
+## 致谢
+
+本 mod 的灵感来自 Slay the Spire 1 的 [Undo the Spire](https://github.com/filippobaroni/undo-the-spire)，作者为 [filippobaroni](https://steamcommunity.com/sharedfiles/filedetails/?id=3354673683)。本项目针对 Slay the Spire 2 的 Godot/.NET 架构重新实现。
