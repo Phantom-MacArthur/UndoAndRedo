@@ -77,7 +77,8 @@ internal static class VisualRebuild
     {
         var nrun = NRun.Instance ?? throw new InvalidOperationException("NRun.Instance is null");
         var old = NCombatRoom.Instance ?? throw new InvalidOperationException("NCombatRoom.Instance is null");
-        var me = LocalContext.GetMe(cs);
+        var me = LocalContext.GetMe(cs)
+                 ?? throw new InvalidOperationException("Local player is unavailable during visual rebuild");
 
         // 1. Where creatures are drawn: the layout depends on spine bounds that settle after creation, so a
         //    fresh room can place them slightly differently. Keep what the player was looking at.
@@ -163,8 +164,12 @@ internal static class VisualRebuild
 
         // 5. Hand cards, in pile order.
         var hand = fresh.Ui.Hand;
+        var playerCombatState = me.PlayerCombatState
+                                ?? throw new InvalidOperationException("Local player has no combat state during visual rebuild");
+        var handPile = playerCombatState.Hand
+                       ?? throw new InvalidOperationException("Local player has no hand pile during visual rebuild");
         int added = 0;
-        foreach (var card in me.PlayerCombatState!.Hand.Cards)
+        foreach (var card in handPile.Cards)
         {
             var nCard = NCard.Create(card);
             if (nCard == null) continue;

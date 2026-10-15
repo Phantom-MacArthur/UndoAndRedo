@@ -42,19 +42,19 @@ internal static class RewindEngine
     // ── configuration ────────────────────────────────────────────────────────
 
     /// <summary>Run the replay in the game's NonInteractiveMode (skips all Cmd waits and executor frame polling).</summary>
-    private const bool UseNonInteractiveReplay = true;
+    private static readonly bool UseNonInteractiveReplay = true;
     private const float FadeSeconds = 0.2f;
     /// <summary>Hide the rebuild behind a frozen copy of the last frame instead of a fade to black.</summary>
-    private const bool UseFreezeFrame = true;
+    private static readonly bool UseFreezeFrame = true;
     /// <summary>Engine.TimeScale while replaying: makes tweens/timers finish in one frame.</summary>
     private const double ReplayTimeScale = 25.0; // safe: hand card motion is snapped by Patch_NHandCardHolder_SnapWhileReplaying
     /// <summary>Disable vsync / fps cap while replaying so per-frame awaits run as fast as the GPU allows.</summary>
-    private const bool UncapFrameRateDuringReplay = false; // measured: replay frames are CPU-bound (~25 ms), vsync is not the limit
+    private static readonly bool UncapFrameRateDuringReplay = false; // measured: replay frames are CPU-bound (~25 ms), vsync is not the limit
     /// <summary>
     /// Stop the render loop while replaying: engine logic keeps running but nothing is drawn, so frame-bound
     /// waits take a fraction of a millisecond and the window simply keeps showing the last frame.
     /// </summary>
-    private const bool DisableRenderLoopDuringReplay = false;
+    private static readonly bool DisableRenderLoopDuringReplay = false;
     private const double CombatStartTimeoutSec = 20.0;
     private const double ReplaySettleTimeoutSec = 30.0;
     private const int SettleStableFrames = 2;
@@ -616,7 +616,9 @@ internal static class RewindEngine
                         break;
                     case CombatReplayEventType.PlayerChoice:
                     {
-                        var player = runState.GetPlayer(ev.playerId!.Value);
+                        var playerId = ev.playerId!.Value;
+                        var player = runState.GetPlayer(playerId)
+                                     ?? throw new InvalidOperationException($"Replay choice refers to unknown player {playerId}");
                         rm.PlayerChoiceSynchronizer.ReceiveReplayChoice(player, ev.choiceId!.Value, ev.playerChoiceResult!.Value);
                         break;
                     }
@@ -651,7 +653,9 @@ internal static class RewindEngine
 
                 await WaitPumping(() => !cm.IsInProgress || (!cm.EndingPlayerTurnPhaseOne && !cm.EndingPlayerTurnPhaseTwo), 60, $"turn phases before event #{n}");
                 if (!cm.IsInProgress) break;
-                var player = runState.GetPlayer(ev.playerId!.Value);
+                var playerId = ev.playerId!.Value;
+                var player = runState.GetPlayer(playerId)
+                             ?? throw new InvalidOperationException($"Replay action refers to unknown player {playerId}");
                 var action = ev.action!.ToGameAction(player);
                 if (action.ActionType == GameActionType.CombatPlayPhaseOnly)
                 {

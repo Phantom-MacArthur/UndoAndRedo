@@ -1,4 +1,4 @@
-# UndoAndRedo 2.2.1 — Combat rewind: snapshot fast path + deterministic replay
+# UndoAndRedo 2.2.2 — Combat rewind: snapshot fast path + deterministic replay
 
 Press **Left Arrow** to undo the last player decision in combat, **Right Arrow** to redo it.
 

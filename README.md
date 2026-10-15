@@ -1,8 +1,12 @@
 # UndoAndRedo
 
-Slay the Spire 2 的单人战斗撤销与重做 mod。当前 mod 版本：**2.2.1**。
+Slay the Spire 2 的单人战斗撤销与重做 mod。当前 mod 版本：**2.2.2**。
 
-Steam 创意工坊：[Undo and Redo](https://steamcommunity.com/sharedfiles/filedetails/?id=3801936266)
+## 2.2.2 更新
+
+- 修复在出牌动作尚未完成时撤销，快速路径回退到重放后因战斗大厅初始化参数不匹配而失败的问题。
+- 确保撤销或重做异常时恢复重放状态并移除冻结画面，避免画面卡住。
+- 修复空值处理并清理编译期不可达分支；Release 构建无警告、无错误。
 
 ## 使用方法
 
@@ -24,7 +28,7 @@ Steam 创意工坊：[Undo and Redo](https://steamcommunity.com/sharedfiles/file
 
 ## 安装
 
-将 `UndoAndRedo.dll` 和 `UndoAndRedo.json` 放入游戏目录的 `mods` 文件夹。此 mod 使用 DLL 加外部 JSON 清单，不需要 `.pck` 文件。游戏目录结构示例：
+将 `UndoAndRedo.dll` 和 `UndoAndRedo.json` 放入游戏目录的 `mods` 文件夹。游戏目录结构示例：
 
 ```text
 Slay the Spire 2/

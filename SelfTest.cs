@@ -381,7 +381,8 @@ internal static class SelfTest
             var hand = MegaCrit.Sts2.Core.Nodes.Combat.NPlayerHand.Instance;
             int modelHand = me.PlayerCombatState!.Hand.Cards.Count;
             int shownHand = hand?.ActiveHolders.Count ?? -1;
-            var shownCards = hand?.ActiveHolders.Select(h => h.CardNode.Model).ToList() ?? new List<CardModel>();
+            var shownCards = hand?.ActiveHolders.Select(h => h.CardNode?.Model).OfType<CardModel>().ToList()
+                             ?? new List<CardModel>();
             bool sameCards = shownCards.Count == modelHand && shownCards.Zip(me.PlayerCombatState.Hand.Cards).All(p => ReferenceEquals(p.First, p.Second));
             int modelAlive = cs.Creatures.Count(c => !c.IsDead);
             int shownAlive = room?.CreatureNodes.Count(n => !n.Entity.IsDead) ?? -1;

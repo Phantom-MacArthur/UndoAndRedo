@@ -100,7 +100,7 @@ internal static class Log
 [ModInitializer("Initialize")]
 public static class UndoAndRedoMod
 {
-    public const string Version = "2.2.1";
+    public const string Version = "2.2.2";
 
     public static void Initialize()
     {
