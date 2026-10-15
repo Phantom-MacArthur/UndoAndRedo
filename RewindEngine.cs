@@ -6,6 +6,7 @@ using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Entities.Actions;
 using MegaCrit.Sts2.Core.Entities.Multiplayer;
 using MegaCrit.Sts2.Core.Entities.Players;
+using MegaCrit.Sts2.Core.Extensions;
 using MegaCrit.Sts2.Core.GameActions;
 using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Multiplayer;
@@ -103,6 +104,8 @@ internal static class RewindEngine
                   $"InitializeSavedRun = {(InitializeSavedRunMethod != null ? "OK" : "NULL")}");
         if (InitializeSharedMethod != null)
             Log.Debug("InitializeShared params: " + string.Join(", ", InitializeSharedMethod.GetParameters().Select(p => $"{p.ParameterType.Name} {p.Name}")));
+        if (InitializeRunLobbyMethod != null)
+            Log.Debug("InitializeRunLobby params: " + string.Join(", ", InitializeRunLobbyMethod.GetParameters().Select(p => $"{p.ParameterType.Name} {p.Name}")));
     }
 
     // ── public entry points ──────────────────────────────────────────────────
@@ -312,47 +315,53 @@ internal static class RewindEngine
 
             await CoverScreen();
             var fastMode = SaveManager.Instance.PrefsSave.FastMode;
-            bool ok;
+            bool ok = false;
             try
             {
-                EnterReplayMode();
-                var fed = await FeedEvents(entry.Segment, runState);
-                ok = await WaitForSettle(fed);
-                await WaitForVisuals(runState);
+                try
+                {
+                    EnterReplayMode();
+                    var fed = await FeedEvents(entry.Segment, runState);
+                    ok = await WaitForSettle(fed);
+                    await WaitForVisuals(runState);
+                }
+                finally
+                {
+                    ExitReplayMode(fastMode);
+                }
+
+                if (ok && replay.events.Count != entry.PrefixCount + entry.Segment.Count)
+                {
+                    Log.Write($"WARNING: after redo, recorded events = {replay.events.Count}, expected {entry.PrefixCount + entry.Segment.Count}");
+                    ok = false;
+                }
+                if (ok && entry.ExpectedShadowAfter != null)
+                {
+                    var actualShadow = ShadowSnapshot.Capture("after redo");
+                    if (actualShadow != null) ShadowSnapshot.CompareInBackground(entry.ExpectedShadowAfter, actualShadow, $"redo of {entry.Segment.Count} events");
+                }
+                if (ok && entry.ExpectedChecksumAfter.HasValue)
+                {
+                    var actual = rec.CurrentChecksum();
+                    if (actual.HasValue && actual.Value != entry.ExpectedChecksumAfter.Value)
+                    {
+                        Log.Write($"WARNING: state checksum mismatch after redo: expected {entry.ExpectedChecksumAfter.Value}, got {actual.Value}");
+                        UndoAndRedoMod.Toast("Redo: state mismatch detected (see log)");
+                    }
+                    else if (actual.HasValue)
+                    {
+                        Log.Debug($"Checksum verified: {actual.Value}");
+                    }
+                }
+
+                int remaining = ReplayRecorder.Boundaries(replay.events).Count;
+                Log.Write($"=== REDO {(ok ? "complete" : "FAILED")} in {sw.ElapsedMilliseconds} ms; undo depth {remaining}, redo {_redo.Count} ===");
+                UndoAndRedoMod.Toast(ok ? $"Redo  ({remaining} undo, {_redo.Count} redo)" : "Redo failed — see UndoAndRedo.log");
             }
             finally
             {
-                ExitReplayMode(fastMode);
+                await UncoverScreen();
             }
-            await UncoverScreen();
-
-            if (ok && replay.events.Count != entry.PrefixCount + entry.Segment.Count)
-            {
-                Log.Write($"WARNING: after redo, recorded events = {replay.events.Count}, expected {entry.PrefixCount + entry.Segment.Count}");
-                ok = false;
-            }
-            if (ok && entry.ExpectedShadowAfter != null)
-            {
-                var actualShadow = ShadowSnapshot.Capture("after redo");
-                if (actualShadow != null) ShadowSnapshot.CompareInBackground(entry.ExpectedShadowAfter, actualShadow, $"redo of {entry.Segment.Count} events");
-            }
-            if (ok && entry.ExpectedChecksumAfter.HasValue)
-            {
-                var actual = rec.CurrentChecksum();
-                if (actual.HasValue && actual.Value != entry.ExpectedChecksumAfter.Value)
-                {
-                    Log.Write($"WARNING: state checksum mismatch after redo: expected {entry.ExpectedChecksumAfter.Value}, got {actual.Value}");
-                    UndoAndRedoMod.Toast("Redo: state mismatch detected (see log)");
-                }
-                else if (actual.HasValue)
-                {
-                    Log.Debug($"Checksum verified: {actual.Value}");
-                }
-            }
-
-            int remaining = ReplayRecorder.Boundaries(replay.events).Count;
-            Log.Write($"=== REDO {(ok ? "complete" : "FAILED")} in {sw.ElapsedMilliseconds} ms; undo depth {remaining}, redo {_redo.Count} ===");
-            UndoAndRedoMod.Toast(ok ? $"Redo  ({remaining} undo, {_redo.Count} redo)" : "Redo failed — see UndoAndRedo.log");
             return ok;
         }
         catch (Exception ex)
@@ -398,109 +407,114 @@ internal static class RewindEngine
         string T() => $"[+{sw.ElapsedMilliseconds} ms, {_frameCounter - f0} frames]";
 
         await CoverScreen();
-        Log.Debug($"{T()} screen covered");
-
         bool ok = false;
         try
         {
-            EnterReplayMode();
-
-            // 1. Tear down (mirrors NPauseMenu "quit to menu" → RunManager.CleanUp).
-            _ownRebuild = true;
-            rm.ActionQueueSet.Reset();
-            rm.CleanUp();
-            _ownRebuild = false;
-            Log.Debug($"{T()} teardown complete");
-
-            // 2. Rebuild the run from the save taken at map-point entry. The game's singleplayer service is used;
-            //    its Type reports Replay while ReplayModeActive (see Patch_NetSingleplayerGameService_Type).
-            var runState = RunState.FromSerializable(header.Save);
-            var service = new NetSingleplayerGameService();
-            SetUpSavedRun(rm, runState, header.Save, service);
-            rm.CombatStateSynchronizer.IsDisabled = true;
-            game.ReactionContainer.InitializeNetworking(service);
-            Log.Debug($"{T()} run rebuilt: act={runState.CurrentActIndex} floor={runState.TotalFloor}");
-
-            // 3. Enter the room the same way the game's replay viewer does.
-            // Run/act assets are already resident (same character, same act); each of the game's preload
-            // calls ends with a full GC.Collect, so skipping them saves a few hundred ms.
-            rm.Launch();
-            Log.Debug($"{T()} launch");
-            game.RootSceneContainer.SetCurrentScene(NRun.Create(runState));
-            Log.Debug($"{T()} NRun created");
-            await rm.GenerateMap();
-            Log.Debug($"{T()} map generated");
-            rm.ActionQueueSet.FastForwardNextActionId(header.NextActionId);
-            rm.ActionQueueSynchronizer.FastForwardHookId(header.NextHookId);
-            rm.PlayerChoiceSynchronizer.FastForwardChoiceIds(header.ChoiceIds);
-            rm.RewardsSetSynchronizer.FastForwardRewardIds(header.RewardIds);
-            await rm.LoadIntoLatestMapCoord(null);
-            if (rm.MapDrawingsToLoad != null && NRun.Instance != null)
-            {
-                NRun.Instance.GlobalUi.MapScreen.Drawings.LoadDrawings(rm.MapDrawingsToLoad);
-                rm.MapDrawingsToLoad = null;
-            }
-            Log.Debug($"{T()} room entered: {rm.DebugOnlyGetState()?.CurrentRoom?.GetType().Name} {rm.DebugOnlyGetState()?.CurrentRoom?.ModelId}");
-
-            // 4. Wait for the play phase of turn 1.
-            var cmTrace = CombatManager.Instance;
-            Action<CombatState> onSetUp = _ => Log.Debug($"{T()}   combat set up");
-            Action<CombatState> onTurnStarted = _ => Log.Debug($"{T()}   turn started (round {cmTrace.DebugOnlyGetState()?.RoundNumber}, side {cmTrace.DebugOnlyGetState()?.CurrentSide})");
-            Action<CombatState> onTurnEnded = _ => Log.Debug($"{T()}   turn ended");
-            cmTrace.CombatSetUp += onSetUp; cmTrace.TurnStarted += onTurnStarted; cmTrace.TurnEnded += onTurnEnded;
+            Log.Debug($"{T()} screen covered");
             try
             {
-            if (!await WaitUntil(() => CombatManager.Instance.IsInProgress
-                                       && rm.ActionQueueSynchronizer.CombatState == ActionSynchronizerCombatState.PlayPhase,
-                                 CombatStartTimeoutSec, "combat start"))
-                return false;
-            Log.Debug($"{T()} play phase reached");
+                EnterReplayMode();
 
-            // 5. Feed the kept events and wait for everything to settle.
-            var fed = await FeedEvents(prefix, runState);
-            Log.Debug($"{T()} events fed");
-            ok = await WaitForSettle(fed);
-            Log.Debug($"{T()} settled");
-            await WaitForVisuals(runState);
-            Log.Debug($"{T()} visuals ready");
+                // 1. Tear down (mirrors NPauseMenu "quit to menu" → RunManager.CleanUp).
+                _ownRebuild = true;
+                rm.ActionQueueSet.Reset();
+                rm.CleanUp();
+                _ownRebuild = false;
+                Log.Debug($"{T()} teardown complete");
+
+                // 2. Rebuild the run from the save taken at map-point entry. The game's singleplayer service is used;
+                //    its Type reports Replay while ReplayModeActive (see Patch_NetSingleplayerGameService_Type).
+                var runState = RunState.FromSerializable(header.Save);
+                var service = new NetSingleplayerGameService();
+                SetUpSavedRun(rm, runState, header.Save, service);
+                rm.CombatStateSynchronizer.IsDisabled = true;
+                game.ReactionContainer.InitializeNetworking(service);
+                Log.Debug($"{T()} run rebuilt: act={runState.CurrentActIndex} floor={runState.TotalFloor}");
+
+                // 3. Enter the room the same way the game's replay viewer does.
+                // Run/act assets are already resident (same character, same act); each of the game's preload
+                // calls ends with a full GC.Collect, so skipping them saves a few hundred ms.
+                rm.Launch();
+                Log.Debug($"{T()} launch");
+                game.RootSceneContainer.SetCurrentScene(NRun.Create(runState));
+                Log.Debug($"{T()} NRun created");
+                await rm.GenerateMap();
+                Log.Debug($"{T()} map generated");
+                rm.ActionQueueSet.FastForwardNextActionId(header.NextActionId);
+                rm.ActionQueueSynchronizer.FastForwardHookId(header.NextHookId);
+                rm.PlayerChoiceSynchronizer.FastForwardChoiceIds(header.ChoiceIds);
+                rm.RewardsSetSynchronizer.FastForwardRewardIds(header.RewardIds);
+                await rm.LoadIntoLatestMapCoord(null);
+                if (rm.MapDrawingsToLoad != null && NRun.Instance != null)
+                {
+                    NRun.Instance.GlobalUi.MapScreen.Drawings.LoadDrawings(rm.MapDrawingsToLoad);
+                    rm.MapDrawingsToLoad = null;
+                }
+                Log.Debug($"{T()} room entered: {rm.DebugOnlyGetState()?.CurrentRoom?.GetType().Name} {rm.DebugOnlyGetState()?.CurrentRoom?.ModelId}");
+
+                // 4. Wait for the play phase of turn 1.
+                var cmTrace = CombatManager.Instance;
+                Action<CombatState> onSetUp = _ => Log.Debug($"{T()}   combat set up");
+                Action<CombatState> onTurnStarted = _ => Log.Debug($"{T()}   turn started (round {cmTrace.DebugOnlyGetState()?.RoundNumber}, side {cmTrace.DebugOnlyGetState()?.CurrentSide})");
+                Action<CombatState> onTurnEnded = _ => Log.Debug($"{T()}   turn ended");
+                cmTrace.CombatSetUp += onSetUp; cmTrace.TurnStarted += onTurnStarted; cmTrace.TurnEnded += onTurnEnded;
+                try
+                {
+                    if (!await WaitUntil(() => CombatManager.Instance.IsInProgress
+                                               && rm.ActionQueueSynchronizer.CombatState == ActionSynchronizerCombatState.PlayPhase,
+                                         CombatStartTimeoutSec, "combat start"))
+                        return false;
+                    Log.Debug($"{T()} play phase reached");
+
+                    // 5. Feed the kept events and wait for everything to settle.
+                    var fed = await FeedEvents(prefix, runState);
+                    Log.Debug($"{T()} events fed");
+                    ok = await WaitForSettle(fed);
+                    Log.Debug($"{T()} settled");
+                    await WaitForVisuals(runState);
+                    Log.Debug($"{T()} visuals ready");
+                }
+                finally
+                {
+                    cmTrace.CombatSetUp -= onSetUp; cmTrace.TurnStarted -= onTurnStarted; cmTrace.TurnEnded -= onTurnEnded;
+                }
+
+                // 6. Verify.
+                var rec = ReplayRecorder.Current;
+                var live = rec?.Replay;
+                if (live != null && live.events.Count != prefix.Count)
+                {
+                    Log.Write($"WARNING: replay produced {live.events.Count} recorded events, expected {prefix.Count} — divergence likely");
+                    ok = false;
+                }
+                if (ok && expectedChecksum.HasValue && rec != null)
+                {
+                    var actual = rec.CurrentChecksum();
+                    if (actual.HasValue && actual.Value != expectedChecksum.Value)
+                    {
+                        Log.Write("WARNING: state checksum mismatch after undo: expected " + expectedChecksum.Value + ", got " + actual.Value
+                                  + System.Environment.NewLine + "EXPECTED STATE" + System.Environment.NewLine + expectedState
+                                  + System.Environment.NewLine + "ACTUAL STATE" + System.Environment.NewLine + rec.CurrentState());
+                        UndoAndRedoMod.Toast("Undo: state mismatch detected (see log)");
+                    }
+                    else if (actual.HasValue)
+                    {
+                        Log.Debug($"Checksum verified: {actual.Value}");
+                    }
+                }
             }
             finally
             {
-                cmTrace.CombatSetUp -= onSetUp; cmTrace.TurnStarted -= onTurnStarted; cmTrace.TurnEnded -= onTurnEnded;
-            }
-
-            // 6. Verify.
-            var rec = ReplayRecorder.Current;
-            var live = rec?.Replay;
-            if (live != null && live.events.Count != prefix.Count)
-            {
-                Log.Write($"WARNING: replay produced {live.events.Count} recorded events, expected {prefix.Count} — divergence likely");
-                ok = false;
-            }
-            if (ok && expectedChecksum.HasValue && rec != null)
-            {
-                var actual = rec.CurrentChecksum();
-                if (actual.HasValue && actual.Value != expectedChecksum.Value)
-                {
-                    Log.Write("WARNING: state checksum mismatch after undo: expected " + expectedChecksum.Value + ", got " + actual.Value
-                              + System.Environment.NewLine + "EXPECTED STATE" + System.Environment.NewLine + expectedState
-                              + System.Environment.NewLine + "ACTUAL STATE" + System.Environment.NewLine + rec.CurrentState());
-                    UndoAndRedoMod.Toast("Undo: state mismatch detected (see log)");
-                }
-                else if (actual.HasValue)
-                {
-                    Log.Debug($"Checksum verified: {actual.Value}");
-                }
+                _ownRebuild = false;
+                ExitReplayMode(fastMode);
             }
         }
         finally
         {
-            _ownRebuild = false;
-            ExitReplayMode(fastMode);
+            RestoreEnemyPositions(enemyPositions);
+            await UncoverScreen();
         }
 
-        RestoreEnemyPositions(enemyPositions);
-        await UncoverScreen();
         Log.Debug($"{T()} screen uncovered");
 
         try
@@ -551,7 +565,11 @@ internal static class RewindEngine
                 Log.Write($"WARNING: unknown InitializeShared parameter '{p.Name}' defaulted");
         }
         InitializeSharedMethod.Invoke(rm, args);
-        InitializeRunLobbyMethod.Invoke(rm, new object[] { service, state });
+        var lobbyPlayers = new[]
+        {
+            new RunLobbyPlayer { id = service.NetId, isModded = service.LocalVersion.IsModded() }
+        };
+        InitializeRunLobbyMethod.Invoke(rm, new object[] { service, state, lobbyPlayers });
         InitializeSavedRunMethod.Invoke(rm, new object[] { save });
 
         static object? Unknown(ParameterInfo p, out bool known)

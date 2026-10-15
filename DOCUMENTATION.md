@@ -139,7 +139,9 @@ redo.
 5. Wait until the hand shows every card at its resting position (min 5 frames), uncover.
 
 If anything throws after step 2, the current room is made safe (`NCombatUi._state`) and the replay path takes
-over — it rebuilds everything from the save and does not depend on the live state.
+over — it rebuilds everything from the save and does not depend on the live state. The freeze-frame cover is
+released in cleanup even if replay startup times out or either path throws, so a failed rewind does not leave
+the screen permanently covered.
 
 **Why the net service must report Replay while feeding**: redo feeds recorded events into the live game in
 replay mode. If the service still reported `Singleplayer`, the combat manager would enqueue its own
@@ -192,8 +194,9 @@ room's pooled `NCard` nodes are freed with the room instead of returned to the p
   Startup logs a "FastPath reflection:" line naming any missing member.
 * `RunManager.State` setter, `RunManager.InitializeShared` / `InitializeRunLobby` / `InitializeSavedRun` —
   equivalent of the public `SetUpSavedSingleplayer`, but with our own net service and without bumping the
-  save file's reload counter. `InitializeShared` parameters are bound by name so added parameters do not
-  break the call. Startup logs a "Reflection:" diagnostic line for every member.
+  save file's reload counter. The run-lobby initializer also receives the local `RunLobbyPlayer` record, as
+  required by the game's current three-parameter signature. `InitializeShared` parameters are bound by name so
+  added parameters do not break the call. Startup logs a "Reflection:" diagnostic line for every member.
 
 ## Limitations
 

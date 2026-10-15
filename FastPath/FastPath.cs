@@ -214,59 +214,64 @@ internal static class FastPath
         catch (Exception ex) { FastWarn($"live capture failed: {ex.Message}; using replay"); return false; }
 
         await ScreenCover.Show();
-
-        // Point of no return starts after the checksum check below.
-        var r = capture.Snapshot.Restore();
-        uint? sum = rec.CurrentChecksum();
-        FastLog($"{T()} restored {capture.Snapshot.Label}: {r.objects} objects, {r.arrays} arrays, {r.errors} errors; checksum {sum} expected {expectedChecksum}");
-        if (!sum.HasValue || sum.Value != expectedChecksum.Value)
-        {
-            var back = live.Restore();
-            FastWarn($"{T()} checksum mismatch; live state put back ({back.errors} errors); using replay");
-            await ScreenCover.Hide();
-            return false;
-        }
-
-        // The decision is back in its queue (it was about to execute when the snapshot was taken): take it out,
-        // hand its id back to the queue, and cut the game's replay log + our bookkeeping to the kept prefix.
-        DetachDecision(rm, capture.Decision);
-        var replay = rec.Replay;
-        if (replay != null && replay.events.Count > prefixCount)
-            replay.events.RemoveRange(prefixCount, replay.events.Count - prefixCount);
-        rec.TruncateTracking(prefixCount);
-        FastLog($"{T()} decision detached; recorded events = {replay?.events.Count}, next action id = {rm.ActionQueueSet.NextActionId}");
-
-        var fastMode = SaveManager.Instance.PrefsSave.FastMode;
-        double savedTimeScale = Engine.TimeScale;
         try
         {
-            VisualSyncActive = true;
-            SaveManager.Instance.PrefsSave.FastMode = FastModeType.Instant;
-            try { NGame.Instance?.AudioManager?.SetSfxVol(0f); } catch (Exception ex) { Log.Write($"mute failed: {ex.Message}"); }
-            Engine.TimeScale = VisualTimeScale;
+            // Point of no return starts after the checksum check below.
+            var r = capture.Snapshot.Restore();
+            uint? sum = rec.CurrentChecksum();
+            FastLog($"{T()} restored {capture.Snapshot.Label}: {r.objects} objects, {r.arrays} arrays, {r.errors} errors; checksum {sum} expected {expectedChecksum}");
+            if (!sum.HasValue || sum.Value != expectedChecksum.Value)
+            {
+                var back = live.Restore();
+                FastWarn($"{T()} checksum mismatch; live state put back ({back.errors} errors); using replay");
+                return false;
+            }
 
-            await VisualRebuild.Rebuild(rs, cs, room, T, FastLog);
-            await VisualRebuild.WaitForVisuals(rs, minFrames: 5, timeoutMs: 1500, FastLog);
-            // The old room is freed at the end of the frame it was removed in; by now it is gone, so any model
-            // that cached one of its nodes must forget it (lazy caches re-resolve against the new room).
-            int cleared = ModelSnapshot.ClearDisposedGodotReferences(Roots(rm));
-            if (cleared > 0) FastWarn($"{T()} cleared {cleared} reference(s) to freed nodes");
-        }
-        catch
-        {
-            VisualRebuild.MakeCurrentRoomSafe(cs);
-            throw;
+            // The decision is back in its queue (it was about to execute when the snapshot was taken): take it out,
+            // hand its id back to the queue, and cut the game's replay log + our bookkeeping to the kept prefix.
+            DetachDecision(rm, capture.Decision);
+            var replay = rec.Replay;
+            if (replay != null && replay.events.Count > prefixCount)
+                replay.events.RemoveRange(prefixCount, replay.events.Count - prefixCount);
+            rec.TruncateTracking(prefixCount);
+            FastLog($"{T()} decision detached; recorded events = {replay?.events.Count}, next action id = {rm.ActionQueueSet.NextActionId}");
+
+            var fastMode = SaveManager.Instance.PrefsSave.FastMode;
+            double savedTimeScale = Engine.TimeScale;
+            try
+            {
+                VisualSyncActive = true;
+                SaveManager.Instance.PrefsSave.FastMode = FastModeType.Instant;
+                try { NGame.Instance?.AudioManager?.SetSfxVol(0f); } catch (Exception ex) { Log.Write($"mute failed: {ex.Message}"); }
+                Engine.TimeScale = VisualTimeScale;
+
+                await VisualRebuild.Rebuild(rs, cs, room, T, FastLog);
+                await VisualRebuild.WaitForVisuals(rs, minFrames: 5, timeoutMs: 1500, FastLog);
+                // The old room is freed at the end of the frame it was removed in; by now it is gone, so any model
+                // that cached one of its nodes must forget it (lazy caches re-resolve against the new room).
+                int cleared = ModelSnapshot.ClearDisposedGodotReferences(Roots(rm));
+                if (cleared > 0) FastWarn($"{T()} cleared {cleared} reference(s) to freed nodes");
+            }
+            catch
+            {
+                VisualRebuild.MakeCurrentRoomSafe(cs);
+                throw;
+            }
+            finally
+            {
+                Engine.TimeScale = savedTimeScale;
+                SaveManager.Instance.PrefsSave.FastMode = fastMode;
+                VisualSyncActive = false;
+                _ = TaskHelper.RunSafely(RestoreSfxVolumeSoon());
+            }
+
+            FastLog($"{T()} fast undo -> event {target} complete");
+            return true;
         }
         finally
         {
-            Engine.TimeScale = savedTimeScale;
-            SaveManager.Instance.PrefsSave.FastMode = fastMode;
-            VisualSyncActive = false;
-            _ = TaskHelper.RunSafely(RestoreSfxVolumeSoon());
+            await ScreenCover.Hide();
         }
-        await ScreenCover.Hide();
-        FastLog($"{T()} fast undo -> event {target} complete");
-        return true;
     }
 
     private static void DetachDecision(RunManager rm, GameAction decision)
